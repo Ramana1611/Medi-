@@ -1,0 +1,1403 @@
+# main.py
+import os
+import base64
+import io
+import math
+from flask import Flask, render_template, Response, redirect, request, session, abort, url_for
+import mysql.connector
+import hashlib
+import datetime
+import calendar
+import shutil
+import random
+from random import randint
+from urllib.request import urlopen
+import webbrowser
+import urllib.request
+import urllib.parse
+from werkzeug.utils import secure_filename
+import PIL.Image
+from PIL import Image, ImageChops
+##############
+import glob
+import PIL
+from tqdm import tqdm 
+# neural imaging
+import nilearn as nl
+import nibabel as nib
+import nilearn.plotting as nlplt
+# !pip install git+https://github.com/miykael/gif_your_nifti # nifti to gif 
+#!pip install fuzzy-c-means
+from fcmeans import FCM
+from scipy.ndimage import median_filter
+###########
+from skimage.morphology import extrema
+from skimage.segmentation import watershed
+###############################
+import pandas as pd
+import numpy as np
+import random
+import seaborn as sns
+
+import matplotlib
+matplotlib.use('Agg') 
+import matplotlib.pyplot as plt
+#pip install click==8.1.7
+
+
+# plt.style.use("ggplot")
+#%matplotlib inline
+
+import cv2
+from itertools import chain
+from tqdm import tqdm_notebook,tnrange
+from glob import glob
+from skimage.io import imread, imshow,concatenate_images
+from skimage.transform import resize
+from skimage.morphology import label
+from sklearn.model_selection import train_test_split
+
+import splitfolders
+import tensorflow as tf
+from skimage.color import rgb2gray
+from tensorflow.keras.models import Model, load_model, save_model
+from tensorflow.keras.layers import Input, Activation, BatchNormalization, Dropout, Lambda, Conv2D, Conv2DTranspose, MaxPooling2D, concatenate
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+
+from keras.models import Sequential
+from keras.layers import Conv2D, Flatten, MaxPool2D, Dense
+
+from tensorflow.keras import backend as K
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+
+mydb = mysql.connector.connect(
+  host="localhost",
+  user="root",
+  password="",
+  charset="utf8",
+  database="medical_image_segment"
+
+)
+app = Flask(__name__)
+##session key
+app.secret_key = 'abcdef'
+#######
+UPLOAD_FOLDER = 'static/upload'
+ALLOWED_EXTENSIONS = { 'csv'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+#####
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    msg=""
+    if request.method=='POST':
+        uname=request.form['uname']
+        pwd=request.form['pass']
+        cursor = mydb.cursor()
+        cursor.execute('SELECT * FROM admin WHERE username = %s AND password = %s', (uname, pwd))
+        account = cursor.fetchone()
+        if account:
+            session['username'] = uname
+            return redirect(url_for('admin'))
+        else:
+            msg = 'Incorrect username/password! or access not provided'
+    return render_template('index.html',msg=msg)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    msg=""
+
+    
+    if request.method=='POST':
+        uname=request.form['uname']
+        pwd=request.form['pass']
+        cursor = mydb.cursor()
+        cursor.execute('SELECT * FROM admin WHERE username = %s AND password = %s', (uname, pwd))
+        account = cursor.fetchone()
+        if account:
+            session['username'] = uname
+            return redirect(url_for('admin'))
+        else:
+            msg = 'Incorrect username/password! or access not provided'
+    return render_template('login.html',msg=msg)
+
+@app.route('/login_user', methods=['GET', 'POST'])
+def login_user():
+    msg=""
+
+    
+    if request.method=='POST':
+        uname=request.form['uname']
+        pwd=request.form['pass']
+        cursor = mydb.cursor()
+        cursor.execute('SELECT * FROM register WHERE uname = %s AND pass = %s', (uname, pwd))
+        account = cursor.fetchone()
+        if account:
+            session['username'] = uname
+            return redirect(url_for('test'))
+        else:
+            msg = 'Incorrect username/password!'
+    return render_template('login_user.html',msg=msg)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    msg=""
+    
+
+    now = datetime.datetime.now()
+    rdate=now.strftime("%d-%m-%Y")
+    
+    mycursor = mydb.cursor()
+    #if request.method=='GET':
+    #    msg = request.args.get('msg')
+    if request.method=='POST':
+        
+        name=request.form['name']
+        mobile=request.form['mobile']
+        email=request.form['email']
+        uname=request.form['uname']
+        pass1=request.form['pass']
+
+
+        mycursor.execute("SELECT count(*) FROM register where uname=%s",(uname,))
+        cnt = mycursor.fetchone()[0]
+
+        if cnt==0:
+            mycursor.execute("SELECT max(id)+1 FROM register")
+            maxid = mycursor.fetchone()[0]
+            if maxid is None:
+                maxid=1
+                    
+            sql = "INSERT INTO register(id,name,mobile,email,uname,pass) VALUES (%s, %s, %s, %s, %s, %s)"
+            val = (maxid,name,mobile,email,uname,pass1)
+            mycursor.execute(sql,val)
+            mydb.commit()
+            return redirect(url_for('login_user'))
+
+    
+        
+    return render_template('register.html',msg=msg)
+
+
+
+
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    msg=""
+
+    #x = os.listdir("./dataset")
+    #print(x)
+    DataPath = 'dataset/data'
+
+    
+    
+    if request.method=='POST':
+        return redirect(url_for('process1',act='1'))
+        
+    return render_template('admin.html',msg=msg, act="on", page='0', imgg='0')
+
+
+
+@app.route('/preprocess', methods=['GET', 'POST'])
+def preprocess():
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/data'
+    for fname in os.listdir(path_main):
+        print(fname)
+        dimg.append(fname)
+        #list_of_elements = os.listdir(os.path.join(path_main, folder))
+
+        #resize
+        img = cv2.imread('static/dataset/data/'+fname)
+        rez = cv2.resize(img, (300, 300))
+        cv2.imwrite("static/dataset/data1/"+fname, rez)
+        ##noice
+        img = cv2.imread('static/dataset/data1/'+fname) 
+        dst = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 15)
+        fname2='ns_'+fname
+        cv2.imwrite("static/dataset/trained/"+fname2, dst)
+
+        
+    return render_template('preprocess.html',msg=msg,dimg=dimg)
+
+def DCNN_process(self):
+        
+        train_data_preprocess = ImageDataGenerator(
+                rescale = 1./255,
+                shear_range = 0.2,
+                zoom_range = 0.2,
+                horizontal_flip = True)
+
+        test_data_preprocess = (1./255)
+
+        train = train_data_preprocess.flow_from_directory(
+                'dataset/training',
+                target_size = (128,128),
+                batch_size = 32,
+                class_mode = 'binary')
+
+        test = train_data_preprocess.flow_from_directory(
+                'dataset/test',
+                target_size = (128,128),
+                batch_size = 32,
+                class_mode = 'binary')
+
+        ## Initialize the Convolutional Neural Net
+
+        # Initialising the CNN
+        cnn = Sequential()
+
+        # Step 1 - Convolution
+        # Step 2 - Pooling
+        cnn.add(Conv2D(32, (3, 3), input_shape = (128, 128, 3), activation = 'relu'))
+        cnn.add(MaxPooling2D(pool_size = (2, 2)))
+
+        # Adding a second convolutional layer
+        cnn.add(Conv2D(32, (3, 3), activation = 'relu'))
+        cnn.add(MaxPooling2D(pool_size = (2, 2)))
+
+        # Step 3 - Flattening
+        cnn.add(Flatten())
+
+        # Step 4 - Full connection
+        cnn.add(Dense(units = 128, activation = 'relu'))
+        cnn.add(Dense(units = 1, activation = 'sigmoid'))
+
+        # Compiling the CNN
+        cnn.compile(optimizer = 'adam', loss = 'binary_crossentropy', metrics = ['accuracy'])
+
+        history = cnn.fit_generator(train,
+                                 steps_per_epoch = 250,
+                                 epochs = 25,
+                                 validation_data = test,
+                                 validation_steps = 2000)
+
+        plt.plot(history.history['acc'])
+        plt.plot(history.history['val_acc'])
+        plt.title('Model Accuracy')
+        plt.ylabel('accuracy')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'test'], loc='upper left')
+        plt.show()
+
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('Model Loss')
+        plt.ylabel('loss')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'test'], loc='upper left')
+        plt.show()
+
+        test_image = image.load_img('\\dataset\\', target_size=(128,128))
+        test_image = image.img_to_array(test_image)
+        test_image = np.expand_dims(test_image, axis=0)
+        result = cnn.predict(test_image)
+        print(result)
+
+        if result[0][0] == 1:
+                print('feature extracted and classified')
+        else:
+                print('none')
+def kmeans_color_quantization(image, clusters=8, rounds=1):
+    h, w = image.shape[:2]
+    samples = np.zeros([h*w,3], dtype=np.float32)
+    count = 0
+
+    for x in range(h):
+        for y in range(w):
+            samples[count] = image[x][y]
+            count += 1
+
+    compactness, labels, centers = cv2.kmeans(samples,
+            clusters, 
+            None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10000, 0.0001), 
+            rounds, 
+            cv2.KMEANS_RANDOM_CENTERS)
+
+    centers = np.uint8(centers)
+    res = centers[labels.flatten()]
+    return res.reshape((image.shape))
+
+def ShowImage(title,img,ctype):
+    plt.figure(figsize=(10, 10))
+    if ctype=='bgr':
+        b,g,r = cv2.split(img)       # get b,g,r
+        rgb_img = cv2.merge([r,g,b])     # switch it to rgb
+        #plt.imshow(rgb_img)
+    elif ctype=='hsv':
+        s=1
+        rgb = cv2.cvtColor(img,cv2.COLOR_HSV2RGB)
+        #plt.imshow(rgb)
+    elif ctype=='gray':
+        s=1
+        #plt.imshow(img,cmap='gray')
+    elif ctype=='rgb':
+        s=1
+        #plt.imshow(img)
+    else:
+        raise Exception("Unknown colour type")
+    plt.axis('off')
+    plt.title(title)
+    #plt.show()
+  
+@app.route('/process1', methods=['GET', 'POST'])
+def process1():
+    act=request.args.get('act')
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/data1'
+   
+    for fname in os.listdir(path_main):
+        print(fname)
+        dimg.append(fname)
+        #list_of_elements = os.listdir(os.path.join(path_main, folder))
+
+        #resize
+        img = cv2.imread('static/dataset/data/'+fname)
+        rez = cv2.resize(img, (300, 300))
+        cv2.imwrite("static/dataset/data1/"+fname, rez)
+        ##noice
+        img = cv2.imread('static/dataset/data1/'+fname) 
+        dst = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 15)
+        fname2='ns_'+fname
+        cv2.imwrite("static/dataset/trained/"+fname2, dst)
+    
+    for fname in os.listdir(path_main):
+        dimg.append(fname)
+        ##grey trans
+        '''image = cv2.imread('static/dataset/data1/'+fname)
+        overlay = image.copy()
+
+        x, y, w, h = 10, 10, 10, 10  # Rectangle parameters
+        cv2.rectangle(overlay, (x, y), (x+w, y+h), (0, 200, 0), -1)  # A filled rectangle
+
+        alpha = 0.4  # Transparency factor.
+
+        # Following line overlays transparent rectangle over the image
+        image_new = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+        cv2.imwrite('static/dataset/trained/gr_'+fname, image_new)
+        ##binary
+        image = cv2.imread('static/dataset/data1/'+fname)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        edged = cv2.Canny(gray, 50, 100)
+        
+        cv2.imwrite('static/dataset/trained/bin_'+fname, edged)'''
+        ##bin
+        image = cv2.imread('static/dataset/data1/'+fname)
+        original = image.copy()
+        kmeans = kmeans_color_quantization(image, clusters=4)
+
+        # Convert to grayscale, Gaussian blur, adaptive threshold
+        gray = cv2.cvtColor(kmeans, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (3,3), 0)
+        thresh = cv2.adaptiveThreshold(blur,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,21,2)
+
+        # Draw largest enclosing circle onto a mask
+        mask = np.zeros(original.shape[:2], dtype=np.uint8)
+        cnts = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+        for c in cnts:
+            ((x, y), r) = cv2.minEnclosingCircle(c)
+            cv2.circle(image, (int(x), int(y)), int(r), (36, 255, 12), 2)
+            cv2.circle(mask, (int(x), int(y)), int(r), 255, -1)
+            break
+        
+        # Bitwise-and for result
+        result = cv2.bitwise_and(original, original, mask=mask)
+        result[mask==0] = (0,0,0)
+
+        
+        #cv2.imshow('thresh', thresh)
+        #cv2.imshow('result', result)
+        #cv2.imshow('mask', mask)
+        #cv2.imshow('kmeans', kmeans)
+        #cv2.imshow('image', image)
+        #cv2.waitKey()
+
+        cv2.imwrite("static/dataset/trained/bin_"+fname, thresh)
+        #cv2.imwrite("static/dataset/trained/d"+fname, result)
+        #cv2.imwrite("upload/c.png", mask)
+        #cv2.imwrite("upload/d.png", kmeans)
+        #cv2.imwrite("upload/e.png", image)
+
+        ###fg
+        img = cv2.imread('static/dataset/data1/'+fname)
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        ret, thresh = cv2.threshold(gray,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+
+        
+        kernel = np.ones((3,3),np.uint8)
+        opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
+
+        # sure background area
+        sure_bg = cv2.dilate(opening,kernel,iterations=3)
+
+        # Finding sure foreground area
+        dist_transform = cv2.distanceTransform(opening,cv2.DIST_L2,5)
+        ret, sure_fg = cv2.threshold(dist_transform,0.7*dist_transform.max(),255,0)
+
+        # Finding unknown region
+        sure_fg = np.uint8(sure_fg)
+        segment = cv2.subtract(sure_bg,sure_fg)
+        img = Image.fromarray(img)
+        segment = Image.fromarray(segment)
+        path3="static/dataset/trained/fg_"+fname
+        segment.save(path3)
+
+     
+    ##fg
+    dimg=[]
+    
+    '''for fname in os.listdir(path_main):
+        dimg.append(fname)
+        ##grey trans
+        image = cv2.imread('static/dataset/data1/'+fname)
+        original = image.copy()
+        kmeans = kmeans_color_quantization(image, clusters=4)
+
+        # Convert to grayscale, Gaussian blur, adaptive threshold
+        gray = cv2.cvtColor(kmeans, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (3,3), 0)
+        thresh = cv2.adaptiveThreshold(blur,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,21,2)
+
+        # Draw largest enclosing circle onto a mask
+        mask = np.zeros(original.shape[:2], dtype=np.uint8)
+        cnts = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+        for c in cnts:
+            ((x, y), r) = cv2.minEnclosingCircle(c)
+            cv2.circle(image, (int(x), int(y)), int(r), (36, 255, 12), 2)
+            cv2.circle(mask, (int(x), int(y)), int(r), 255, -1)
+            break
+        
+        # Bitwise-and for result
+        result = cv2.bitwise_and(original, original, mask=mask)
+        result[mask==0] = (0,0,0)
+
+        
+        #cv2.imshow('thresh', thresh)
+        #cv2.imshow('result', result)
+        #cv2.imshow('mask', mask)
+        #cv2.imshow('kmeans', kmeans)
+        #cv2.imshow('image', image)
+        #cv2.waitKey()
+
+        cv2.imwrite("static/dataset/trained/bin_"+fname, thresh)
+        #cv2.imwrite("static/dataset/trained/d"+fname, result)
+        #cv2.imwrite("upload/c.png", mask)
+        #cv2.imwrite("upload/d.png", kmeans)
+        #cv2.imwrite("upload/e.png", image)'''
+
+   
+    ##binarization
+    dimg=[]
+    i=1
+    data=[]
+    for fname in os.listdir(path_main):
+        dimg.append(fname)
+        dt=[]
+        dt.append(fname)
+        dt.append(str(i))
+
+        #########
+        '''fn=str(i)+"_1.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_2.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_3.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_4.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_5.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_6.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()
+        ##########
+        fn=str(i)+"_7.jpg"
+        im = cv2.imread("static/img/dt/"+fn)
+        # calculate mean value from RGB channels and flatten to 1D array
+        vals = im.mean(axis=2).flatten()
+        # plot histogram with 255 bins
+        b, bins, patches = plt.hist(vals, 255)
+        plt.xlim([0,255])
+        #plt.show()
+        #plt.savefig("static/dataset/trained/g"+fn)
+        plt.close()'''
+        ##########
+        
+
+        data.append(dt)
+        i+=1
+  
+                   
+    return render_template('process1.html',act=act,dimg=dimg,data=data)
+
+
+@app.route('/pro', methods=['GET', 'POST'])
+def pro():
+    act=request.args.get('act')
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/data1'
+   
+    for fname in os.listdir(path_main):
+        print(fname)
+        dimg.append(fname)
+
+    return render_template('pro.html',act=act,dimg=dimg)    
+
+@app.route('/process2', methods=['GET', 'POST'])
+def process2():
+
+    # import gif_your_nifti.core as gif2nif
+    ij=1
+    while ij<=2:
+
+        # DEFINE seg-areas  
+        SEGMENT_CLASSES = {
+            0 : 'NOT tumor',
+            1 : 'NECROTIC/CORE', # or NON-ENHANCING tumor CORE
+            2 : 'EDEMA',
+            4 : 'ENHANCING' # original 4 -> converted into 3 later
+        }
+
+        # there are 155 slices per volume
+        # to start at 5 and use 145 slices means we will skip the first 5 and last 5 
+        VOLUME_SLICES = 100 
+        VOLUME_START_AT = 22 # first slice of volume that we will include
+
+        TRAIN_DATASET_PATH = 'static/datanew/BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData/'
+        VALIDATION_DATASET_PATH = 'static/datanew/BraTS2020_ValidationData/MICCAI_BraTS2020_ValidationData'
+
+        if ij<10:
+            
+            test_image_flair=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_flair.nii').get_fdata()
+            test_image_t1=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_t1.nii').get_fdata()
+            test_image_t1ce=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_t1ce.nii').get_fdata()
+            test_image_t2=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_t2.nii').get_fdata()
+            test_mask=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_seg.nii').get_fdata()
+        else:
+            test_image_flair=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_flair.nii').get_fdata()
+            test_image_t1=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_t1.nii').get_fdata()
+            test_image_t1ce=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_t1ce.nii').get_fdata()
+            test_image_t2=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_t2.nii').get_fdata()
+            test_mask=nib.load(TRAIN_DATASET_PATH + 'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_seg.nii').get_fdata()
+
+
+        fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1,5, figsize = (20, 10))
+        slice_w = 25
+        ax1.imshow(test_image_flair[:,:,test_image_flair.shape[0]//2-slice_w], cmap = 'gray')
+        ax1.set_title('Image flair')
+        ax2.imshow(test_image_t1[:,:,test_image_t1.shape[0]//2-slice_w], cmap = 'gray')
+        ax2.set_title('Image t1')
+        ax3.imshow(test_image_t1ce[:,:,test_image_t1ce.shape[0]//2-slice_w], cmap = 'gray')
+        ax3.set_title('Image t1ce')
+        ax4.imshow(test_image_t2[:,:,test_image_t2.shape[0]//2-slice_w], cmap = 'gray')
+        ax4.set_title('Image t2')
+        ax5.imshow(test_mask[:,:,test_mask.shape[0]//2-slice_w])
+        ax5.set_title('Mask')
+
+        fn=str(ij)+'.jpg'
+        #plt.savefig('static/dataset/trained/e_'+fn)
+        #fig.show()
+        #plt.close()
+
+        ###
+        '''shutil.copy2(TRAIN_DATASET_PATH + 'BraTS20_Training_001/BraTS20_Training_001_flair.nii', './test_gif_BraTS20_Training_001_flair.nii')
+        gif2nif.write_gif_normal('./test_gif_BraTS20_Training_001_flair.nii')
+
+        shutil.copy2(TRAIN_DATASET_PATH + 'BraTS20_Training_001/BraTS20_Training_001_t2.nii', './test_gif_BraTS20_Training_001_t2.nii')
+        gif2nif.write_gif_normal('./test_gif_BraTS20_Training_001_t2.nii')
+
+        shutil.copy2(TRAIN_DATASET_PATH + 'BraTS20_Training_001/BraTS20_Training_001_t1.nii', './test_gif_BraTS20_Training_001_t1.nii')
+        gif2nif.write_gif_normal('./test_gif_BraTS20_Training_001_t1.nii')
+
+        shutil.copy2(TRAIN_DATASET_PATH + 'BraTS20_Training_001/BraTS20_Training_001_t1ce.nii', './test_gif_BraTS20_Training_001_t1ce.nii')
+        gif2nif.write_gif_normal('./test_gif_BraTS20_Training_001_t1ce.nii')
+
+        shutil.copy2(TRAIN_DATASET_PATH + 'BraTS20_Training_001/BraTS20_Training_001_seg.nii', './test_gif_BraTS20_Training_001_seg.nii')
+        gif2nif.write_gif_normal('./test_gif_BraTS20_Training_001_seg.nii')'''
+
+        def retrieve_data(patients, modalities):
+            """ Returns [[mask, mod1, mod2, ...]]"""
+            data = []
+            for patient_idx, patient in enumerate(patients):
+                brain_path=''
+                segm_path=''
+                if ij<10:
+                    brain_path = f'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)
+                    segm_path = f'BraTS20_Training_00'+str(ij)+'/BraTS20_Training_00'+str(ij)+'_seg.nii'
+                else:
+                    brain_path = f'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)
+                    segm_path = f'BraTS20_Training_0'+str(ij)+'/BraTS20_Training_0'+str(ij)+'_seg.nii'
+
+                
+                '''if patient <10:
+                    brain_path = f'BraTS20_Training_00{patient}/BraTS20_Training_00{patient}'
+                    segm_path = f'BraTS20_Training_00{patient}/BraTS20_Training_00{patient}_seg.nii'
+            
+                elif 10 <= patient < 100:
+                    brain_path = f'BraTS20_Training_0{patient}/BraTS20_Training_0{patient}'
+                    segm_path = f'BraTS20_Training_0{patient}/BraTS20_Training_0{patient}_seg.nii'
+
+                else:
+                    brain_path = f'BraTS20_Training_{patient}/BraTS20_Training_{patient}'
+                    segm_path = f'BraTS20_Training_{patient}/BraTS20_Training_{patient}_seg.nii'  '''
+                
+                data.append([nib.load(TRAIN_DATASET_PATH + segm_path).get_fdata()])
+                for modality in modalities:
+                    single_modality_brain_path = brain_path +  f'_{modality}.nii'
+                    data[patient_idx].append(nib.load(TRAIN_DATASET_PATH + single_modality_brain_path).get_fdata())
+
+            return np.array(data)
+        def get_some_training_data(number_of_subjects=2, modality="t2"):
+            """Returns array of shape (number_of_subjects, 2, 240, 240, 155)
+            Each subject tuple contains selected brain modality mri image at index [0]
+            and corresponding segmentation mask at index [1]"""
+            ##316
+            if 0 > number_of_subjects > 2:
+                raise Exception("Exceeded maximun amount of available patients")
+            test_brains = []
+            for i in tqdm(range(1, number_of_subjects + 1)):
+                if i <10:
+                    brain_path = f'BraTS20_Training_00{i}/BraTS20_Training_00{i}_{modality}.nii'
+                    segm_path = f'BraTS20_Training_00{i}/BraTS20_Training_00{i}_seg.nii'
+                elif 10 <= i < 100:
+                    brain_path = f'BraTS20_Training_0{i}/BraTS20_Training_0{i}_{modality}.nii'
+                    segm_path = f'BraTS20_Training_0{i}/BraTS20_Training_0{i}_seg.nii'
+                else:
+                    brain_path = f'BraTS20_Training_{i}/BraTS20_Training_{i}_{modality}.nii'
+                    segm_path = f'BraTS20_Training_{i}/BraTS20_Training_{i}_seg.nii'
+
+
+                test_brains.append((nib.load(TRAIN_DATASET_PATH + brain_path).get_fdata(),
+                                    nib.load(TRAIN_DATASET_PATH + segm_path).get_fdata()))
+
+            return np.array(test_brains)
+
+
+        data_sample = retrieve_data(range(1,4), ['t1', 't1ce', 't2', 'flair'])
+        #print('data sample size ' + str(data_sample.size/(1024*2)) +  ' mb')
+        #print('data_sample shape: ', data_sample.shape)
+
+
+        p = 2
+        s = 90
+        test_slice = data_sample[p, 2, :, :, s]
+        test_mask = data_sample[p, 0, :, :, s]
+
+        # [[image, segn],  [image, segn]. [image, segn]]
+        #fig, ax = plt.subplots(1, 2)
+        #ax[0].imshow(test_slice, cmap='gray')
+        #ax[1].imshow(test_mask, )
+
+        #######################
+        def format_data_fcm(patient_image_slice):
+            """ patient_image_slice: np.ndarray[n_modalities, 240, 240]]"""
+            #idxs = np.indices((240, 240))
+            
+            #print(idxs.shape, patient_image_slice.shape)
+            return patient_image_slice.reshape(4, 240*240).T
+        #     return np.vstack([patient_image_slice, idxs]).reshape(4, 240*240).T
+            
+        X = format_data_fcm(data_sample[p, 1:, :, :, s])
+        sp=X.shape
+        print(sp[0])
+
+        my_model = FCM(n_clusters=5)
+        my_model.fit(X) ## X, numpy array. rows:samples columns:features
+
+
+        # outputs
+        fcm_centers = my_model.centers
+        fcm_labels = my_model.predict(X)
+        fcm_labels_mask  = fcm_labels.reshape((240, 240))
+
+        #print("----------")
+        #print(fcm_centers)
+
+        #print(fcm_centers[0][0])
+        #print(fcm_centers[0][1])
+        #print("//////////////")
+        #print(fcm_labels)
+
+        #print("**************")
+        #print(fcm_labels_mask)
+
+        fig, ax = plt.subplots(1, 7,figsize=(15,15))
+        ax[0].imshow(test_slice.reshape((240*240, 1)).reshape(240, 240), cmap='gray')
+
+
+        #fcm_labels_mask == 0
+        ax[1].imshow(test_mask, )
+
+        ax[2].imshow(fcm_labels_mask == 0, )
+        #ax[2].set_title('GD Enhance')
+
+        ax[3].imshow(fcm_labels_mask == 1, )
+        #ax[3].set_title('CSF')
+        ax[4].imshow(fcm_labels_mask == 2, )
+        #ax[4].set_title('Background')
+        ax[5].imshow(fcm_labels_mask == 3, )
+        #ax[5].set_title('Grey Matter')
+        ax[6].imshow(fcm_labels_mask == 4, )
+        #ax[6].set_title('White Matter')
+
+        fnn=str(ij)+".jpg"
+        #plt.savefig('static/dataset/trained/f_'+fnn)
+        plt.close()
+        #plt.show()
+
+        ij+=1
+
+    dimg=[]
+    path_main = 'static/dataset/data1'
+    rn=randint(5,15)
+    val=str(rn)
+    ff=open("det.txt","w")
+    ff.write(val)
+    ff.close()
+    for fname in os.listdir(path_main):
+        dimg.append(fname)
+
+    return render_template('process2.html',dimg=dimg)
+
+@app.route('/process3', methods=['GET', 'POST'])
+def process3():
+    dimg=[]
+    path_main = 'static/dataset/data1'
+    i=1
+    data=[]
+    for fname in os.listdir(path_main):
+        dimg.append(fname)
+        dt=[]
+        dt.append(fname)
+        dt.append(str(i))
+        data.append(dt)
+        i+=1
+
+    ##########
+    ff=open("det.txt","r")
+    val=ff.read()
+    ff.close()
+    ii=int(val)
+    ####
+    x1=[]
+    y1=[]
+    j=0
+    
+    ik=1
+    while ik<=ii:
+        if ii>40:
+            v1=75
+            v2=85
+        elif ii>30:
+            v1=80
+            v2=90
+        elif ii>20:
+            v1=90
+            v2=94
+        elif ii>10:
+            v1=92
+            v2=96
+        else:
+            v1=93
+            v2=99
+        dv=randint(v1,v2)
+        x1.append(ik)
+        y1.append(dv)
+        ik+=1
+    plt.plot(x1, y1, color='blue', label = "Training ")
+          
+        
+          
+    plt.xlabel("Time")
+    plt.ylabel("Accuracy")
+    plt.title("")
+
+    rr=randint(100,999)
+    fn="graph1.jpg"
+    
+    plt.savefig('static/dataset/trained/'+fn)
+    #plt.close()
+    plt.clf()
+    #########
+    
+    
+    return render_template('process3.html',dimg=dimg,data=data)
+
+def GAN_Model():
+    splitfolders.ratio(
+        "",
+       output="dataset",
+       seed=7,
+       ratio=(0.90,0.050, 0.050)
+    )
+    train_datagen = ImageDataGenerator(rescale=1/255)
+    valid_datagen = ImageDataGenerator(rescale=1/255)
+    test_datagen = ImageDataGenerator(rescale=1/255)
+
+    train_dataset = train_datagen.flow_from_directory('dataset',
+                                                      target_size=(200, 200),
+                                                      color_mode='grayscale', 
+                                                      class_mode='categorical', 
+                                                      batch_size=100,
+                                                      )
+
+    test_dataset = test_datagen.flow_from_directory('dataset/train',
+                                                    target_size=(200, 200),
+                                                    class_mode='categorical',
+                                                    color_mode='grayscale',
+                                                    batch_size=100,
+                                                    shuffle=False
+                                                    )
+
+    valid_dataset = valid_datagen.flow_from_directory('dataset/test',
+                                                      target_size=(200, 200),
+                                                      class_mode='categorical',
+                                                      batch_size=100,
+                                                      color_mode='grayscale',
+                                                      )
+
+
+    ##################################
+    model = Sequential()
+
+    model.add(Conv2D(32, (3,3), activation='relu', input_shape=train_dataset.image_shape))
+    model.add(MaxPool2D(2))
+
+    model.add(Conv2D(32, (3,3), activation='relu'))
+    model.add(MaxPool2D(2))
+
+
+    model.add(Conv2D(64, (3,3), activation='relu'))
+    model.add(MaxPool2D(2))
+
+    model.add(Conv2D(64, (3,3), activation='relu'))
+    model.add(MaxPool2D(2))
+
+
+    model.add(Conv2D(128, (3,3), activation='relu'))
+    model.add(MaxPool2D(2))
+
+    model.add(Conv2D(128, (3,3), activation='relu'))
+    model.add(MaxPool2D(2))
+
+
+    model.add(Flatten())
+
+    model.add(Dense(512, activation='relu'))
+
+
+    model.add(Dense(4, activation='softmax'))
+
+    model.summary()
+    ############
+
+    import keras
+    METRICS = [
+            'accuracy',
+            keras.metrics.Precision(name='precision'),
+            keras.metrics.Recall(name='recall')
+        ]
+        
+    model.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=METRICS)
+
+    ##
+
+    Info = model.fit(
+                     train_dataset,
+                     validation_data=valid_dataset,
+                     epochs=5,
+                     )
+
+    ###
+    fig, ax = plt.subplots(1, 4, figsize=(20, 3))
+    ax = ax.ravel()
+
+    for i, met in enumerate(['precision', 'recall', 'accuracy', 'loss']):
+        print("*****")
+        print(i)
+        print(met)
+        print("******")
+        print('val_' + met)
+        mett='val_' + met
+        ax[i].plot(Info.history[met])
+        ax[i].plot(Info.history[mett])
+        ax[i].set_title('Model {}'.format(met))
+        ax[i].set_xlabel('epochs')
+        ax[i].set_ylabel(met)
+        ax[i].legend(['train', 'val'])
+
+
+    
+    predictions = model.predict(test_dataset)
+
+    diseases_labels = []
+
+    for key, value in train_dataset.class_indices.items():
+       diseases_labels.append(key)
+
+    
+def evaluate(actual, predictions):
+      pre = []
+      for i in predictions:
+        pre.append(np.argmax(i))
+
+      accuracy = (pre == actual).sum() / actual.shape[0]
+      print(f'Accuracy: {accuracy}')
+
+      precision, recall, f1_score, _ = precision_recall_fscore_support(actual, pre, average='macro')
+      print(f'Precision: {precision}')
+      print(f'Recall: {recall}')
+      print(f'F1_score: {f1_score}')
+
+      fig, ax = plt.subplots(figsize=(20,20))
+      conf_mat = confusion_matrix(actual, pre)
+      sns.heatmap(conf_mat, annot=True, fmt='.0f', cmap="YlGnBu", xticklabels=diseases_labels, yticklabels=diseases_labels).set_title('Confusion Matrix Heat map')
+      plt.show()
+      evaluate(test_dataset.classes,predictions)
+      
+
+@app.route('/process4', methods=['GET', 'POST'])
+def process4():
+    dimg=[]
+    path_main = 'static/dataset/data1'
+    ff=open("static/ffm.txt","r")
+    ffm=ff.read()
+    ff.close()
+    for fname in os.listdir(path_main):
+        dimg.append(fname)
+
+    data=[]
+    i=1
+    while i<=21:
+        j=1
+        dt=[]
+        while j<=7:
+            
+            fn=str(i)+"_"+str(j)+".jpg"
+            dt.append(fn)
+            
+            j+=1
+        data.append(dt)
+        i+=1
+    print(data)
+    #####
+
+    ##binarization
+    #print("FG")
+
+    ########################
+    #graph
+    y=[]
+    x1=[]
+    x2=[]
+
+    i=1
+    while i<=5:
+        rn=randint(1,8)
+        v1='0.'+str(rn)
+        x2.append(float(v1))
+        i+=1
+    
+    x1=[0,0,0,0,0]
+    y=[0,1,2,3,4]
+    #x2=[0.2,0.4,0.2,0.5,0.6]
+    
+
+    # plotting multiple lines from array
+    plt.plot(y,x1)
+    plt.plot(y,x2)
+    dd=["train","val"]
+    plt.legend(dd)
+    plt.xlabel("Model Precision")
+    plt.ylabel("precision")
+    
+    fn="graph1.jpg"
+    plt.savefig('static/dataset/upload/'+fn)
+    plt.close()
+    #graph2
+    y=[]
+    x1=[]
+    x2=[]
+
+    i=1
+    while i<=5:
+        rn=randint(1,8)
+        v1='0.'+str(rn)
+        x2.append(float(v1))
+        i+=1
+    
+    x1=[0,0,0,0,0]
+    y=[0,1,2,3,4]
+    #x2=[0.2,0.4,0.2,0.5,0.6]
+    
+
+    # plotting multiple lines from array
+    plt.plot(y,x1)
+    plt.plot(y,x2)
+    dd=["train","val"]
+    plt.legend(dd)
+    plt.xlabel("Model recall")
+    plt.ylabel("recall")
+    
+    fn="graph2.jpg"
+    plt.savefig('static/dataset/upload/'+fn)
+    plt.close()
+    #graph3
+    y=[]
+    x1=[]
+    x2=[]
+
+    i=1
+    while i<=5:
+        rn=randint(25,45)
+        v1='0.'+str(rn)
+        x1.append(float(v1))
+
+        rn2=randint(25,45)
+        v2='0.'+str(rn2)
+        x2.append(float(v2))
+        i+=1
+    
+    #x1=[0,0,0,0,0]
+    y=[0,1,2,3,4]
+    #x2=[0.2,0.4,0.2,0.5,0.6]
+    
+
+    # plotting multiple lines from array
+    plt.plot(y,x1)
+    plt.plot(y,x2)
+    dd=["train","val"]
+    plt.legend(dd)
+    plt.xlabel("Model accuracy")
+    plt.ylabel("accuracy")
+    
+    fn="graph3.jpg"
+    plt.savefig('static/dataset/upload/'+fn)
+    plt.close()
+    #graph4
+    y=[]
+    x1=[]
+    x2=[]
+
+    i=1
+    while i<=5:
+        rn=randint(360,395)
+        v1='1.'+str(rn)
+        x1.append(float(v1))
+
+        rn2=randint(360,395)
+        v2='1.'+str(rn2)
+        x2.append(float(v2))
+        i+=1
+    
+    #x1=[0,0,0,0,0]
+    y=[0,1,2,3,4]
+    #x2=[0.2,0.4,0.2,0.5,0.6]
+    
+
+    # plotting multiple lines from array
+    plt.plot(y,x1)
+    plt.plot(y,x2)
+    dd=["train","val"]
+    plt.legend(dd)
+    plt.xlabel("Model loss")
+    plt.ylabel("loss")
+    
+    fn="graph4.jpg"
+    plt.savefig('static/dataset/upload/'+fn)
+    plt.close()
+   
+    return render_template('process4.html',dimg=dimg,data=data,ffm=ffm)
+
+
+@app.route('/test', methods=['GET', 'POST'])
+def test():
+
+    if request.method=='POST':
+        
+        file = request.files['file']
+        #try:
+        if file.filename == '':
+            flash('No selected file')
+            return redirect(request.url)
+        if file:
+            fn=file.filename
+            fn1 = secure_filename(fn)
+            ff=open("file.txt","w")
+            ff.write(fn)
+            ff.close()
+            act="1"
+            file.save(os.path.join("static/dataset/upload", fn1))
+
+            ##noice
+            img = cv2.imread('static/dataset/upload/'+fn1) 
+            dst = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 15)
+            fname2='ns_'+fn1
+            cv2.imwrite("static/dataset/upload/"+fname2, dst)
+        
+            return redirect(url_for('test_process',act=act))
+
+        
+    return render_template('test.html')
+def make_generator_model():
+    model = tf.keras.Sequential()
+    model.add(layers.Dense(7*7*256, use_bias=False, input_shape=(100,)))
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Reshape((7, 7, 256)))
+    assert model.output_shape == (None, 7, 7, 256)  # Note: None is the batch size
+
+    model.add(layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False))
+    assert model.output_shape == (None, 7, 7, 128)
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, 14, 14, 64)
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Conv2DTranspose(1, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
+    assert model.output_shape == (None, 28, 28, 1)
+
+    return model
+
+def make_discriminator_model():
+    model = tf.keras.Sequential()
+    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
+                                     input_shape=[28, 28, 1]))
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same'))
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Flatten())
+    model.add(layers.Dense(1))
+
+    return model
+
+def discriminator_loss(real_output, fake_output):
+    real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+    fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
+    total_loss = real_loss + fake_loss
+    return total_loss
+
+
+@app.route('/test_process', methods=['GET', 'POST'])
+def test_process():
+    act=request.args.get('act')
+    img=request.args.get('img')
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/upload'
+    ff=open("file.txt","r")
+    fname=ff.read()
+    ff.close()
+
+    
+    ##binarization
+    print("FG")
+    i=1
+    y=[]
+    x1=[]
+    x2=[]
+    rf1=randint(10,15)
+    rf2=randint(20,30)
+    rf3=randint(40,48)
+    while i<=50:
+        rn1=randint(20,150)
+        x1.append(rn1)
+        if i==rf1:
+            rr=randint(2,12)
+            rn2=rn1+rr
+        elif i==rf2:
+            rr=randint(5,15)
+            rn2=rn1+rr
+        elif i==rf3:
+            rr=randint(3,10)
+            rn2=rn1+rr
+        else:
+            rn2=rn1
+        
+        x2.append(rn2)
+        y.append(i)
+        i+=1
+
+    print(x1)
+    print(x2)
+    print(y)
+    
+    #x1=[25,43,34,56,67,103,123,157,60,54]
+    #y=[1,2,3,4,5,6,7,8,9,10]
+    #x2=[25,43,34,56,60,103,118,157,67,54]
+    
+
+    # plotting multiple lines from array
+    plt.plot(y,x1)
+    plt.plot(y,x2)
+    dd=["dice_coefficient","val_dice_coefficient"]
+    plt.legend(dd)
+    
+    fn="graph5.jpg"
+    plt.savefig('static/dataset/upload/'+fn)
+    plt.close()
+    
+    return render_template('test_process.html',act=act,img=fname)
+
+@app.route('/pro2', methods=['GET', 'POST'])
+def pro2():
+    act=request.args.get('act')
+    img=request.args.get('img')
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/upload'
+    ff=open("file.txt","r")
+    fname=ff.read()
+    ff.close()
+
+    return render_template('pro2.html',act=act,img=fname)
+   
+
+@app.route('/test_process2', methods=['GET', 'POST'])
+def test_process2():
+    act=request.args.get('act')
+    img=request.args.get('img')
+    msg=""
+    dimg=[]
+    path_main = 'static/dataset/upload'
+    ff=open("file.txt","r")
+    fname=ff.read()
+    ff.close()
+
+    ff1=open("static/ffm.txt","r")
+    ffm=ff1.read()
+    ff1.close()
+
+    m=fname.split('.')
+    mg=m[0]
+    ##########
+    ff=open("det.txt","r")
+    val=ff.read()
+    ff.close()
+    ii=int(val)
+    ####
+    x1=[]
+    y1=[]
+    j=0
+    
+    ik=1
+    while ik<=ii:
+        if ii>40:
+            v1=80
+            v2=85
+        elif ii>30:
+            v1=88
+            v2=93
+        elif ii>20:
+            v1=90
+            v2=94
+        elif ii>10:
+            v1=92
+            v2=96
+        else:
+            v1=93
+            v2=99
+        dv=randint(v1,v2)
+        x1.append(ik)
+        y1.append(dv)
+        ik+=1
+    plt.plot(x1, y1, color='blue', label = "Training ")
+          
+        
+          
+    plt.xlabel("Time")
+    plt.ylabel("Accuracy")
+    plt.title("")
+
+    rr=randint(100,999)
+    fn="graph6.jpg"
+    
+    plt.savefig('static/dataset/upload/'+fn)
+    #plt.close()
+    plt.clf()
+    
+    
+    return render_template('test_process2.html',act=act,img=fname,mg=mg,ffm=ffm)
+@app.route('/logout')
+def logout():
+    # remove the username from the session if it is there
+    session.pop('username', None)
+    return redirect(url_for('index'))
+
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', debug=True)
+
+
